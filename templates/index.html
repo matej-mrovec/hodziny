@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Čas serveru</title>
+<style>
+  :root {
+    --bg: #17191c;
+    --face: #1f2329;
+    --ring: #00e5ff;
+    --accent: #00e5ff;
+    --hand: #ffffff;
+    --tick: rgba(255,255,255,0.35);
+    --tick-major: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    font-family: "Segoe UI", Roboto, Arial, sans-serif;
+    color: #fff;
+  }
+  .clock-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 30px;
+  }
+  canvas {
+    width: min(78vmin, 560px);
+    height: min(78vmin, 560px);
+    filter: drop-shadow(0 0 18px rgba(0, 229, 255, 0.18)) drop-shadow(0 30px 50px rgba(0,0,0,0.6));
+  }
+  .digital {
+    font-size: 2.4rem;
+    font-weight: 300;
+    letter-spacing: 0.25em;
+    color: var(--accent);
+    text-shadow: 0 0 12px rgba(0, 229, 255, 0.5);
+    font-variant-numeric: tabular-nums;
+  }
+  .hint {
+    position: fixed;
+    bottom: 18px;
+    font-size: 0.85rem;
+    color: rgba(255,255,255,0.35);
+    letter-spacing: 0.08em;
+  }
+  .cuckoo-indicator {
+    position: fixed;
+    top: 22px;
+    font-size: 0.9rem;
+    letter-spacing: 0.12em;
+    color: rgba(0,229,255,0.7);
+    opacity: 0;
+    transition: opacity 0.3s;
+    text-transform: uppercase;
+  }
+  .cuckoo-indicator.on { opacity: 1; }
+  .bird {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -260px) scale(0.2);
+    font-size: 64px;
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 0.35s ease, opacity 0.35s ease;
+    filter: drop-shadow(0 0 10px rgba(0,229,255,0.6));
+  }
+  .bird.show {
+    transform: translate(-50%, -320px) scale(1);
+    opacity: 1;
+  }
+</style>
+</head>
+<body>
+  <div class="cuckoo-indicator" id="cuckooIndicator">Kukačky: ZAPNUTO (mezerník)</div>
+  <div class="bird" id="bird">🐦</div>
+  <div class="clock-wrap">
+    <canvas id="clock" width="520" height="520"></canvas>
+    <div class="digital" id="digital"></div>
+  </div>
+  <div class="hint">Mezerník = zapnout/vypnout kukačky (každých 15 min)</div>
+
+  <script>
+    const h0 = {{ hour }}, m0 = {{ minute }}, s0 = {{ second }};
+    const base = new Date();
+    base.setHours(h0, m0, s0, 0);
+    const baseMs = base.getTime();
+    const start = Date.now();
+
+    const canvas = document.getElementById('clock');
+    const ctx = canvas.getContext('2d');
+    const R = canvas.width / 2;
+    ctx.translate(R, R);
+
+    let cuckooMode = false;
+    let lastQuarterKey = null;
+    let cuckooUntil = 0;
+    let audioCtx = null;
+
+    function ensureAudio() {
+      if (!audioCtx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AC();
+      }
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      return audioCtx;
+    }
+
+    function playCuckoo(times) {
+      const ac = ensureAudio();
+      const t0 = ac.currentTime + 0.05;
+      for (let i = 0; i < times; i++) {
+        const t = t0 + i * 0.7;
+        chirp(ac, t, 660, 0.18);
+        chirp(ac, t + 0.18, 520, 0.28);
+      }
+    }
+
+    function chirp(ac, t, freq, dur) {
+      const o = ac.createOscillator();
+      const g = ac.createGain();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(freq, t);
+      o.frequency.exponentialRampToValueAtTime(freq * 0.92, t + dur);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.3, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g); g.connect(ac.destination);
+      o.start(t); o.stop(t + dur + 0.02);
+    }
+
+    function triggerCuckoo(now) {
+      const h = now.getHours();
+      const m = now.getMinutes();
+      let count = 0;
+      if (m === 0) count = h % 12 === 0 ? 12 : h % 12;
+      else if (m === 15 || m === 30 || m === 45) count = 1;
+      else return;
+      const key = h + ':' + m;
+      if (key === lastQuarterKey) return;
+      lastQuarterKey = key;
+      playCuckoo(count);
+      cuckooUntil = Date.now() + count * 700 + 400;
+      document.getElementById('bird').classList.add('show');
+    }
+
+    function draw() {
+      const now = new Date(baseMs + (Date.now() - start));
+      ctx.clearRect(-R, -R, canvas.width, canvas.height);
+
+      // face
+      ctx.beginPath();
+      ctx.arc(0, 0, R - 10, 0, 2 * Math.PI);
+      ctx.fillStyle = '#1f2329';
+      ctx.fill();
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = '#00e5ff';
+      ctx.shadowColor = 'rgba(0,229,255,0.35)';
+      ctx.shadowBlur = 18;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      // inner subtle ring
+      ctx.beginPath();
+      ctx.arc(0, 0, R - 24, 0, 2 * Math.PI);
+      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // ticks
+      for (let i = 0; i < 60; i++) {
+        const ang = i * Math.PI / 30;
+        const major = i % 5 === 0;
+        const inner = R - (major ? 38 : 26);
+        const outer = R - 14;
+        ctx.beginPath();
+        ctx.strokeStyle = major ? '#ffffff' : 'rgba(255,255,255,0.35)';
+        ctx.lineWidth = major ? 3 : 1.5;
+        ctx.lineCap = 'round';
+        ctx.moveTo(Math.cos(ang) * inner, Math.sin(ang) * inner);
+        ctx.lineTo(Math.cos(ang) * outer, Math.sin(ang) * outer);
+        ctx.stroke();
+      }
+
+      // numbers
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '600 32px "Segoe UI", Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      for (let n = 1; n <= 12; n++) {
+        const ang = n * Math.PI / 6 - Math.PI / 2;
+        ctx.fillText(n, Math.cos(ang) * (R - 62), Math.sin(ang) * (R - 62));
+      }
+
+      const sec = now.getSeconds();
+      const min = now.getMinutes() + sec / 60;
+      const hr = (now.getHours() % 12) + min / 60;
+
+      function hand(angle, length, width, color, tail, glow) {
+        ctx.save();
+        ctx.rotate(angle);
+        ctx.beginPath();
+        ctx.lineWidth = width;
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = color;
+        if (glow) {
+          ctx.shadowColor = color;
+          ctx.shadowBlur = 12;
+        }
+        ctx.moveTo(0, tail || 0);
+        ctx.lineTo(0, -length);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      hand(hr * Math.PI / 6, R * 0.46, 8, '#ffffff', 16);
+      hand(min * Math.PI / 30, R * 0.68, 5, '#ffffff', 20);
+      hand(sec * Math.PI / 30, R * 0.76, 2.5, '#00e5ff', 26);
+
+      ctx.beginPath();
+      ctx.arc(0, 0, 9, 0, 2 * Math.PI);
+      ctx.fillStyle = '#00e5ff';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(0, 0, 3.5, 0, 2 * Math.PI);
+      ctx.fillStyle = '#14171c';
+      ctx.fill();
+
+      document.getElementById('digital').textContent = now.toLocaleTimeString('cs-CZ');
+
+      if (cuckooMode) triggerCuckoo(now);
+      if (Date.now() > cuckooUntil) document.getElementById('bird').classList.remove('show');
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.code === 'Space') {
+        e.preventDefault();
+        cuckooMode = !cuckooMode;
+        const ind = document.getElementById('cuckooIndicator');
+        ind.textContent = 'Kukačky: ' + (cuckooMode ? 'ZAPNUTO' : 'VYPNUTO') + ' (mezerník)';
+        ind.classList.toggle('on', cuckooMode);
+        if (cuckooMode) ensureAudio();
+      }
+    });
+
+    // warm audio on first click too
+    document.addEventListener('click', () => { if (cuckooMode) ensureAudio(); }, { once: true });
+
+    setInterval(draw, 1000);
+    draw();
+  </script>
+</body>
+</html>
